@@ -90,7 +90,7 @@ if st.session_state.page == "landing":
             try:
                 st.image("image_d5260d.png", use_container_width=True)
             except:
-                st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Tunas_Kelapa.png/440px-Tunas_Kelapa.png", use_container_width=True)
+                st.image("logoNSC.png", use_container_width=True)
         
         st.markdown("<h1 style='text-align: center; margin-top: 10px;'>SMKN 1 CILAMAYA</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; font-size: 20px;'>Sistem Informasi Absensi Guru (SIAG)</p>", unsafe_allow_html=True)
