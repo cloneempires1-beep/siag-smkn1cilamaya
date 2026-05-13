@@ -135,93 +135,83 @@ elif st.session_state.logged_in:
         st.session_state.page = "landing"
         st.rerun()
 
-   # --- MODUL GURU (VERSI DENGAN JAM KE- & ANTI DUPLIKAT) ---
-    if role == "Guru":
-        from streamlit_js_eval import get_geolocation
+# --- MODUL GURU (VERSI KETIK JAM MANUAL) ---
+if role == "Guru":
+    from streamlit_js_eval import get_geolocation
+    
+    st.header(f"Panel Guru: {ket}")
+    t1, t2, t3 = st.tabs(["📝 Input Absen", "📚 Riwayat & Materi", "🔐 Keamanan"])
+    
+    with t1:
+        st.subheader("Form Absensi Harian")
         
-        st.header(f"Panel Guru: {ket}")
-        t1, t2, t3 = st.tabs(["📝 Input Absen", "📚 Riwayat & Materi", "🔐 Keamanan"])
+        # Deteksi Lokasi
+        st.markdown("### 📍 Verifikasi Lokasi")
+        location = get_geolocation()
         
-        with t1:
-            st.subheader("Form Absensi Harian")
-            
-            # Mendeteksi Lokasi
-            st.markdown("### 📍 Verifikasi Lokasi")
-            location = get_geolocation()
-            
-            if location:
-                lat = location['coords']['latitude']
-                lon = location['coords']['longitude']
-                geo_string = f"{lat}, {lon}"
-                st.success(f"Lokasi terdeteksi: {geo_string}")
-            else:
-                st.warning("Menunggu GPS... Pastikan izin lokasi aktif agar tombol kirim muncul.")
-                geo_string = None
+        if location:
+            lat = location['coords']['latitude']
+            lon = location['coords']['longitude']
+            geo_string = f"{lat}, {lon}"
+            st.success(f"Lokasi terdeteksi: {geo_string}")
+        else:
+            st.warning("Menunggu GPS... Pastikan izin lokasi (Allow) sudah diklik.")
+            geo_string = None
 
-            with st.form("absen_guru"):
-                conn = sqlite3.connect('absensi_sekolah.db')
-                
-                # OTOMATIS: Tambah kolom 'jam_ke' dan 'lokasi' jika belum ada
-                try:
-                    conn.execute("ALTER TABLE absensi ADD COLUMN lokasi TEXT")
-                    conn.commit()
-                except: pass
-                try:
-                    conn.execute("ALTER TABLE absensi ADD COLUMN jam_ke TEXT")
-                    conn.commit()
-                except: pass
-                
-                list_kelas = [r[0] for r in conn.execute("SELECT keterangan FROM users WHERE role='Siswa'").fetchall()]
-                conn.close()
-                
-                kls = st.selectbox("Pilih Kelas", list_kelas)
-                
-                # Penambahan Input Jam Ke-
-                pilihan_jam = ["1-2", "3-4", "5-6", "Istirahat", "7-8", "9-10", "11-12"]
-                jk = st.selectbox("Mengajar di Jam Ke-", pilihan_jam)
-                
-                mpl = st.text_input("Mata Pelajaran")
-                mtr = st.text_area("Materi Pembelajaran")
-                
-                submit_button = st.form_submit_button("Kirim Absensi")
-                
-                if submit_button:
-                    if not geo_string:
-                        st.error("Gagal! Lokasi wajib dideteksi sebelum mengirim absen.")
-                    elif not mpl or not mtr:
-                        st.error("Isi semua kolom terlebih dahulu.")
-                    else:
-                        try:
-                            conn = sqlite3.connect('absensi_sekolah.db')
-                            c = conn.cursor()
-                            
-                            # --- LOGIKA ANTI DUPLIKAT ---
-                            tgl_hari_ini = get_waktu_wib().split(' ')[0]
+        with st.form("absen_guru"):
+            conn = sqlite3.connect('absensi_sekolah.db')
+            # Pastikan kolom jam_ke dan lokasi ada
+            try:
+                conn.execute("ALTER TABLE absensi ADD COLUMN lokasi TEXT")
+                conn.execute("ALTER TABLE absensi ADD COLUMN jam_ke TEXT")
+                conn.commit()
+            except: pass
+            
+            list_kelas = [r[0] for r in conn.execute("SELECT keterangan FROM users WHERE role='Siswa'").fetchall()]
+            conn.close()
+            
+            kls = st.selectbox("Pilih Kelas", list_kelas)
+            
+            # --- INPUT JAM MANUAL ---
+            jk = st.text_input("Mengajar di Jam Ke-", placeholder="Contoh: 1-4 atau 5-9")
+            
+            mpl = st.text_input("Mata Pelajaran")
+            mtr = st.text_area("Materi Pembelajaran")
+            
+            submit_button = st.form_submit_button("Kirim Absensi")
+            
+            if submit_button:
+                if not geo_string:
+                    st.error("Gagal! Lokasi wajib dideteksi.")
+                elif not jk or not mpl or not mtr:
+                    st.error("Lengkapi semua data (Jam, Mapel, Materi).")
+                else:
+                    try:
+                        conn = sqlite3.connect('absensi_sekolah.db')
+                        c = conn.cursor()
+                        
+                        # Cek Duplikat berdasarkan teks yang diketik
+                        tgl_hari_ini = get_waktu_wib().split(' ')[0]
+                        c.execute("""
+                            SELECT id FROM absensi 
+                            WHERE nama_guru = ? 
+                            AND kelas = ? 
+                            AND jam_ke = ?
+                            AND tanggal LIKE ?
+                        """, (ket, kls, jk, f"{tgl_hari_ini}%"))
+                        
+                        if c.fetchone():
+                            st.warning(f"⚠️ Anda sudah input absen kelas {kls} jam {jk} hari ini.")
+                        else:
                             c.execute("""
-                                SELECT id FROM absensi 
-                                WHERE nama_guru = ? 
-                                AND kelas = ? 
-                                AND jam_ke = ?
-                                AND tanggal LIKE ?
-                            """, (ket, kls, jk, f"{tgl_hari_ini}%"))
-                            
-                            data_ada = c.fetchone()
-                            
-                            if data_ada:
-                                st.warning(f"⚠️ Anda sudah mengisi absen kelas {kls} untuk jam ke-{jk} hari ini.")
-                                conn.close()
-                            else:
-                                # Simpan data termasuk jam_ke dan lokasi
-                                c.execute("""
-                                    INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, lokasi, jam_ke, status_siswa, status_kepsek) 
-                                    VALUES (?,?,?,?,?,?,?,?,?)
-                                """, (get_waktu_wib(), ket, mpl, kls, mtr, geo_string, jk, 'Pending', 'Pending'))
-                                
-                                conn.commit()
-                                conn.close()
-                                st.success(f"✅ Absensi jam ke-{jk} berhasil dikirim!")
-                        except Exception as e:
-                            st.error(f"Error: {e}")
+                                INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, lokasi, jam_ke, status_siswa, status_kepsek) 
+                                VALUES (?,?,?,?,?,?,?,?,?)
+                            """, (get_waktu_wib(), ket, mpl, kls, mtr, geo_string, jk, 'Pending', 'Pending'))
+                            conn.commit()
+                            st.success(f"✅ Absensi jam {jk} berhasil dikirim!")
+                        conn.close()
+                    except Exception as e:
+                        st.error(f"Terjadi kesalahan: {e}")
 
         with t2:
             st.subheader("Riwayat Mengajar")
