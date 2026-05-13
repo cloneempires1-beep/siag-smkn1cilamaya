@@ -135,7 +135,7 @@ elif st.session_state.logged_in:
         st.session_state.page = "landing"
         st.rerun()
 
-   # --- MODUL GURU (VERSI TERPISAH KOLOM GEOTAG) ---
+   # --- MODUL GURU (VERSI DENGAN JAM KE- & ANTI DUPLIKAT) ---
     if role == "Guru":
         from streamlit_js_eval import get_geolocation
         
@@ -155,23 +155,31 @@ elif st.session_state.logged_in:
                 geo_string = f"{lat}, {lon}"
                 st.success(f"Lokasi terdeteksi: {geo_string}")
             else:
-                st.warning("Menunggu GPS... Pastikan izin lokasi aktif.")
+                st.warning("Menunggu GPS... Pastikan izin lokasi aktif agar tombol kirim muncul.")
                 geo_string = None
 
             with st.form("absen_guru"):
                 conn = sqlite3.connect('absensi_sekolah.db')
                 
-                # OTOMATIS: Tambah kolom lokasi jika belum ada (hanya jalan sekali)
+                # OTOMATIS: Tambah kolom 'jam_ke' dan 'lokasi' jika belum ada
                 try:
                     conn.execute("ALTER TABLE absensi ADD COLUMN lokasi TEXT")
                     conn.commit()
-                except:
-                    pass # Jika kolom sudah ada, abaikan errornya
+                except: pass
+                try:
+                    conn.execute("ALTER TABLE absensi ADD COLUMN jam_ke TEXT")
+                    conn.commit()
+                except: pass
                 
                 list_kelas = [r[0] for r in conn.execute("SELECT keterangan FROM users WHERE role='Siswa'").fetchall()]
                 conn.close()
                 
                 kls = st.selectbox("Pilih Kelas", list_kelas)
+                
+                # Penambahan Input Jam Ke-
+                pilihan_jam = ["1-2", "3-4", "5-6", "Istirahat", "7-8", "9-10", "11-12"]
+                jk = st.selectbox("Mengajar di Jam Ke-", pilihan_jam)
+                
                 mpl = st.text_input("Mata Pelajaran")
                 mtr = st.text_area("Materi Pembelajaran")
                 
@@ -179,7 +187,7 @@ elif st.session_state.logged_in:
                 
                 if submit_button:
                     if not geo_string:
-                        st.error("Gagal! Lokasi wajib dideteksi.")
+                        st.error("Gagal! Lokasi wajib dideteksi sebelum mengirim absen.")
                     elif not mpl or not mtr:
                         st.error("Isi semua kolom terlebih dahulu.")
                     else:
@@ -187,43 +195,40 @@ elif st.session_state.logged_in:
                             conn = sqlite3.connect('absensi_sekolah.db')
                             c = conn.cursor()
                             
-                            # --- LOGIKA PENGAMAN DATA GANDA ---
-                            tgl_hari_ini = get_waktu_wib().split(' ')[0] # Ambil tanggalnya saja (YYYY-MM-DD)
-                            
-                            # Cek apakah sudah ada data dengan Nama, Kelas, dan Tanggal yang sama
+                            # --- LOGIKA ANTI DUPLIKAT ---
+                            tgl_hari_ini = get_waktu_wib().split(' ')[0]
                             c.execute("""
                                 SELECT id FROM absensi 
                                 WHERE nama_guru = ? 
                                 AND kelas = ? 
+                                AND jam_ke = ?
                                 AND tanggal LIKE ?
-                            """, (ket, kls, f"{tgl_hari_ini}%"))
+                            """, (ket, kls, jk, f"{tgl_hari_ini}%"))
                             
                             data_ada = c.fetchone()
                             
                             if data_ada:
-                                st.warning(f"⚠️ Maaf Pak/Bu {ket}, Bapak/Ibu sudah mengisi absen untuk kelas {kls} hari ini. Data tidak disimpan ulang.")
+                                st.warning(f"⚠️ Anda sudah mengisi absen kelas {kls} untuk jam ke-{jk} hari ini.")
                                 conn.close()
                             else:
-                                # Jika belum ada, baru simpan data
+                                # Simpan data termasuk jam_ke dan lokasi
                                 c.execute("""
-                                    INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, lokasi, status_siswa, status_kepsek) 
-                                    VALUES (?,?,?,?,?,?,?,?)
-                                """, (get_waktu_wib(), ket, mpl, kls, mtr, geo_string, 'Pending', 'Pending'))
+                                    INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, lokasi, jam_ke, status_siswa, status_kepsek) 
+                                    VALUES (?,?,?,?,?,?,?,?,?)
+                                """, (get_waktu_wib(), ket, mpl, kls, mtr, geo_string, jk, 'Pending', 'Pending'))
                                 
                                 conn.commit()
                                 conn.close()
-                                st.success("✅ Absensi berhasil dikirim!")
-                            # ----------------------------------
-                            
+                                st.success(f"✅ Absensi jam ke-{jk} berhasil dikirim!")
                         except Exception as e:
                             st.error(f"Error: {e}")
 
         with t2:
             st.subheader("Riwayat Mengajar")
             conn = sqlite3.connect('absensi_sekolah.db')
-            # Menampilkan kolom lokasi di tabel riwayat
+            # Menampilkan kolom jam_ke di riwayat
             df = pd.read_sql_query("""
-                SELECT tanggal, kelas, mapel, materi, lokasi as '📍 Lokasi', status_siswa as 'Siswa', status_kepsek as 'Kepsek' 
+                SELECT tanggal, jam_ke as 'Jam Ke', kelas, mapel, materi, lokasi as '📍 Lokasi', status_siswa as 'Siswa', status_kepsek as 'Kepsek' 
                 FROM absensi 
                 WHERE nama_guru=? 
                 ORDER BY tanggal DESC
@@ -231,10 +236,11 @@ elif st.session_state.logged_in:
             conn.close()
             
             if not df.empty:
-                # Tips: Lokasi akan muncul sebagai koordinat di tabel
                 st.dataframe(df, use_container_width=True)
             else:
                 st.info("Belum ada riwayat.")
+        
+        # (Tab Keamanan/Ganti Password tetap sama)
 
         with t3:
             # (Bagian Ganti Password tetap sama seperti sebelumnya)
@@ -247,24 +253,39 @@ elif st.session_state.logged_in:
                         update_password(username_aktif, new_p)
                         st.success("✅ Password diperbarui!")
 
-    # --- MODUL SISWA (VERSI BARU DENGAN REKAP) ---
+   # --- MODUL SISWA (VERSI BARU DENGAN JAM KE & LOKASI) ---
     elif role == "Siswa":
         st.header(f"Panel Ketua Kelas: {ket}")
         t1, t2, t3 = st.tabs(["✅ Validasi Guru", "📑 Rekap Guru Mengajar", "🔐 Keamanan"])
         
         with t1:
+            st.subheader("Validasi Kehadiran Guru")
             conn = sqlite3.connect('absensi_sekolah.db')
-            df_v = pd.read_sql_query("SELECT id, tanggal, nama_guru, mapel, materi FROM absensi WHERE kelas=? AND status_siswa='Pending'", conn, params=(ket,))
+            # Menampilkan data yang pending, menyertakan jam_ke dan lokasi
+            df_v = pd.read_sql_query("""
+                SELECT id, tanggal, jam_ke as 'Jam Ke', nama_guru as 'Nama Guru', 
+                       mapel as 'Mapel', materi as 'Materi', lokasi 
+                FROM absensi 
+                WHERE kelas=? AND status_siswa='Pending'
+            """, conn, params=(ket,))
+            
             if not df_v.empty:
-                st.write("Silakan validasi guru yang sedang mengajar saat ini:")
-                st.table(df_v)
-                idx = st.number_input("Masukkan ID Absensi", min_value=1)
-                if st.button("Konfirmasi Kehadiran"):
-                    c = conn.cursor()
-                    c.execute("UPDATE absensi SET status_siswa='Validated' WHERE id=?", (idx,))
-                    conn.commit()
-                    st.success("Berhasil divalidasi!")
-                    st.rerun()
+                st.write("Daftar guru yang belum divalidasi hari ini:")
+                # Menampilkan data dalam bentuk kolom agar lebih rapi untuk Ketua Kelas
+                for index, row in df_v.iterrows():
+                    with st.expander(f"📌 Jam Ke-{row['Jam Ke']} | {row['Nama Guru']}"):
+                        st.write(f"**Mata Pelajaran:** {row['Mapel']}")
+                        st.write(f"**Materi:** {row['Materi']}")
+                        if row['lokasi']:
+                            st.caption(f"📍 Terdeteksi di koordinat: {row['lokasi']}")
+                        
+                        # Tombol konfirmasi langsung per baris (Tanpa ketik ID manual)
+                        if st.button(f"Konfirmasi Kehadiran Jam {row['Jam Ke']}", key=f"v_{row['id']}"):
+                            c = conn.cursor()
+                            c.execute("UPDATE absensi SET status_siswa='Validated' WHERE id=?", (row['id'],))
+                            conn.commit()
+                            st.success(f"Berhasil validasi guru {row['Nama Guru']}!")
+                            st.rerun()
             else:
                 st.info("Tidak ada jadwal guru yang perlu divalidasi saat ini.")
             conn.close()
@@ -272,48 +293,115 @@ elif st.session_state.logged_in:
         with t2:
             st.subheader(f"Riwayat Guru di Kelas {ket}")
             conn = sqlite3.connect('absensi_sekolah.db')
-            # Menampilkan semua guru yang pernah input absen di kelas ini
-            df_rekap_siswa = pd.read_sql_query("SELECT tanggal, nama_guru, mapel, materi, status_siswa FROM absensi WHERE kelas=? ORDER BY tanggal DESC", conn, params=(ket,))
+            # Menampilkan riwayat lengkap termasuk Jam Ke
+            df_rekap_siswa = pd.read_sql_query("""
+                SELECT tanggal, jam_ke as 'Jam Ke', nama_guru as 'Nama Guru', 
+                       mapel as 'Mapel', materi as 'Materi', status_siswa as 'Status' 
+                FROM absensi 
+                WHERE kelas=? 
+                ORDER BY tanggal DESC
+            """, conn, params=(ket,))
             conn.close()
+            
             if not df_rekap_siswa.empty:
                 st.dataframe(df_rekap_siswa, use_container_width=True)
             else:
                 st.warning("Belum ada riwayat mengajar di kelas ini.")
 
         with t3:
-            new_p = st.text_input("Ganti Password", type="password")
-            if st.button("Simpan"):
-                update_password(username_aktif, new_p)
-                st.success("Berhasil diperbarui!")
+            st.subheader("Pengaturan Akun")
+            with st.expander("Ganti Password"):
+                new_p = st.text_input("Password Baru", type="password")
+                if st.button("Simpan Password"):
+                    if new_p != "":
+                        update_password(username_aktif, new_p)
+                        st.success("✅ Password berhasil diperbarui!")
+                    else:
+                        st.error("Password tidak boleh kosong.")
 
-    # --- MODUL KEPALA SEKOLAH ---
+    # --- MODUL KEPALA SEKOLAH (VERSI LENGKAP DENGAN GEOTAG & JAM) ---
     elif role == "Kepsek":
         st.header("Panel Administrasi Kepala Sekolah")
         t1, t2, t3 = st.tabs(["📋 Persetujuan", "📑 Rekap & Download", "🔐 Keamanan"])
+        
         with t1:
+            st.subheader("Antrean Persetujuan Absensi")
             conn = sqlite3.connect('absensi_sekolah.db')
-            df_p = pd.read_sql_query("SELECT id, tanggal, nama_guru, kelas, mapel, materi FROM absensi WHERE status_siswa='Validated' AND status_kepsek='Pending'", conn)
+            
+            # Menampilkan kolom Jam Ke dan Lokasi agar Kepsek bisa cek validitas
+            query_p = """
+                SELECT id, tanggal, jam_ke as 'Jam Ke', nama_guru as 'Nama Guru', 
+                       kelas as 'Kelas', mapel as 'Mapel', materi as 'Materi', lokasi as '📍 Lokasi'
+                FROM absensi 
+                WHERE status_siswa='Validated' AND status_kepsek='Pending'
+            """
+            df_p = pd.read_sql_query(query_p, conn)
+            
             if not df_p.empty:
+                st.write("Data berikut telah divalidasi oleh Ketua Kelas dan menunggu persetujuan Anda:")
                 st.dataframe(df_p, use_container_width=True)
-                if st.button("Setujui Semua"):
-                    c = conn.cursor()
-                    c.execute("UPDATE absensi SET status_kepsek='Approved' WHERE status_siswa='Validated'")
-                    conn.commit()
-                    st.rerun()
+                
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    if st.button("Setujui Semua", type="primary"):
+                        c = conn.cursor()
+                        c.execute("UPDATE absensi SET status_kepsek='Approved' WHERE status_siswa='Validated' AND status_kepsek='Pending'")
+                        conn.commit()
+                        st.success("Semua absensi telah disetujui!")
+                        st.rerun()
             else:
-                st.info("Tidak ada antrean persetujuan.")
+                st.info("Tidak ada antrean persetujuan (semua sudah diproses atau belum divalidasi siswa).")
             conn.close()
+
         with t2:
+            st.subheader("Pusat Data & Rekapitulasi")
             conn = sqlite3.connect('absensi_sekolah.db')
+            
+            # Ambil daftar guru untuk filter
             list_g = [r[0] for r in conn.execute("SELECT keterangan FROM users WHERE role='Guru'").fetchall()]
-            pilih = st.selectbox("Cari Guru", ["Semua Data"] + sorted(list_g))
-            df_final = pd.read_sql_query("SELECT * FROM absensi WHERE (nama_guru=? OR ?='Semua Data') ORDER BY tanggal DESC", conn, params=(pilih, pilih))
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                pilih = st.selectbox("Filter Guru", ["Semua Guru"] + sorted(list_g))
+            with col_b:
+                # Opsi filter tambahan: Semua data atau hanya yang sudah Approved
+                filter_status = st.radio("Status Data", ["Semua", "Hanya Approved"], horizontal=True)
+
+            # Query dinamis berdasarkan filter
+            query_final = "SELECT tanggal, jam_ke, nama_guru, kelas, mapel, materi, lokasi, status_siswa, status_kepsek FROM absensi WHERE 1=1"
+            params = []
+            
+            if pilih != "Semua Guru":
+                query_final += " AND nama_guru = ?"
+                params.append(pilih)
+            if filter_status == "Hanya Approved":
+                query_final += " AND status_kepsek = 'Approved'"
+                
+            query_final += " ORDER BY tanggal DESC"
+            
+            df_final = pd.read_sql_query(query_final, conn, params=params)
+            
             st.dataframe(df_final, use_container_width=True)
+            
+            # Tombol Download
             csv = df_final.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 DOWNLOAD CSV", data=csv, file_name="rekap_sekolah.csv", mime='text/csv', use_container_width=True)
+            st.download_button(
+                label="📥 DOWNLOAD REKAP (CSV)", 
+                data=csv, 
+                file_name=f"rekap_cilamaya_{pilih}.csv", 
+                mime='text/csv', 
+                use_container_width=True
+            )
             conn.close()
+
         with t3:
-            new_p = st.text_input("Ganti Password Admin", type="password")
-            if st.button("Update Password Admin"):
-                update_password(username_aktif, new_p)
-                st.success("Password diperbarui!")
+            st.subheader("Pengaturan Keamanan")
+            with st.expander("Ganti Password Akun Kepsek"):
+                new_p = st.text_input("Password Baru", type="password")
+                confirm_p = st.text_input("Konfirmasi Password", type="password")
+                if st.button("Update Password"):
+                    if new_p == confirm_p and new_p != "":
+                        update_password(username_aktif, new_p)
+                        st.success("✅ Password berhasil diperbarui!")
+                    else:
+                        st.error("Password tidak cocok atau kosong.")
