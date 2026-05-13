@@ -265,18 +265,17 @@ elif st.session_state.logged_in:
                         update_password(username_aktif, new_p)
                         st.success("✅ Password berhasil diperbarui!")
 
-    # --- MODUL KEPALA SEKOLAH ---
+# --- MODUL KEPALA SEKOLAH ---
     elif role == "Kepsek":
         st.header("Panel Administrasi Kepala Sekolah")
-        t1, t2, t3 = st.tabs(["📋 Persetujuan", "📑 Rekap & Download", "🔐 Keamanan"])
+        t1, t2, t3 = st.tabs(["📋 Persetujuan", "📑 Rekap & Manajemen Data", "🔐 Keamanan"])
         
         with t1:
+            # ... (Kode persetujuan tetap sama seperti sebelumnya) ...
             st.subheader("Antrean Persetujuan Absensi")
             conn = sqlite3.connect('absensi_sekolah.db')
-            df_p = pd.read_sql_query("""SELECT id, tanggal, jam_ke as 'Jam Ke', nama_guru as 'Nama Guru', 
-                                        kelas as 'Kelas', mapel as 'Mapel', materi as 'Materi', lokasi as '📍 Lokasi'
-                                        FROM absensi WHERE status_siswa='Validated' AND status_kepsek='Pending'""", conn)
-            
+            df_p = pd.read_sql_query("""SELECT id, tanggal, jam_ke, nama_guru, kelas, mapel FROM absensi 
+                                        WHERE status_siswa='Validated' AND status_kepsek='Pending'""", conn)
             if not df_p.empty:
                 st.dataframe(df_p, use_container_width=True)
                 if st.button("Setujui Semua", type="primary"):
@@ -292,30 +291,72 @@ elif st.session_state.logged_in:
         with t2:
             st.subheader("Pusat Data & Rekapitulasi")
             conn = sqlite3.connect('absensi_sekolah.db')
-            list_g = [r[0] for r in conn.execute("SELECT keterangan FROM users WHERE role='Guru'").fetchall()]
             
-            col_a, col_b = st.columns(2)
-            with col_a:
-                pilih = st.selectbox("Filter Guru", ["Semua Guru"] + sorted(list_g))
-            with col_b:
-                filter_status = st.radio("Status Data", ["Semua", "Hanya Approved"], horizontal=True)
+            # --- FILTER BULAN ---
+            # Mengambil daftar bulan yang unik dari database
+            df_months = pd.read_sql_query("SELECT DISTINCT strftime('%Y-%m', tanggal) as bulan FROM absensi", conn)
+            list_bulan = ["Semua Bulan"] + sorted(df_months['bulan'].tolist(), reverse=True)
+            
+            col_1, col_2 = st.columns(2)
+            with col_1:
+                pilih_bulan = st.selectbox("📅 Pilih Bulan Rekap", list_bulan)
+            with col_2:
+                list_g = [r[0] for r in conn.execute("SELECT keterangan FROM users WHERE role='Guru'").fetchall()]
+                pilih_guru = st.selectbox("👤 Filter Guru", ["Semua Guru"] + sorted(list_g))
 
-            query_final = "SELECT tanggal, jam_ke, nama_guru, kelas, mapel, materi, lokasi, status_siswa, status_kepsek FROM absensi WHERE 1=1"
+            # Query Dinamis
+            query_rekap = "SELECT id, tanggal, jam_ke, nama_guru, kelas, mapel, materi, status_kepsek FROM absensi WHERE 1=1"
             params = []
-            if pilih != "Semua Guru":
-                query_final += " AND nama_guru = ?"
-                params.append(pilih)
-            if filter_status == "Hanya Approved":
-                query_final += " AND status_kepsek = 'Approved'"
             
-            query_final += " ORDER BY tanggal DESC"
-            df_final = pd.read_sql_query(query_final, conn, params=params)
+            if pilih_bulan != "Semua Bulan":
+                query_rekap += " AND tanggal LIKE ?"
+                params.append(f"{pilih_bulan}%")
+            if pilih_guru != "Semua Guru":
+                query_rekap += " AND nama_guru = ?"
+                params.append(pilih_guru)
+            
+            df_final = pd.read_sql_query(query_rekap, conn, params=params)
             st.dataframe(df_final, use_container_width=True)
             
+            # Tombol Download
             csv = df_final.to_csv(index=False).encode('utf-8')
-            st.download_button(label="📥 DOWNLOAD REKAP (CSV)", data=csv, file_name=f"rekap_cilamaya.csv", mime='text/csv', use_container_width=True)
-            conn.close()
+            st.download_button(label="📥 DOWNLOAD REKAP (CSV)", data=csv, 
+                               file_name=f"rekap_{pilih_bulan}_{pilih_guru}.csv", mime='text/csv')
 
+            st.markdown("---")
+            
+            # --- FITUR HAPUS DATA ---
+            st.subheader("🗑️ Manajemen Penghapusan Data")
+            col_del1, col_del2 = st.columns(2)
+            
+            with col_del1:
+                bulan_hapus = st.selectbox("Pilih Bulan yang Akan Dihapus", list_bulan[1:], key="del_month") # Kecuali "Semua"
+                if st.button("🔴 Hapus Data Bulan Terpilih", use_container_width=True):
+                    c = conn.cursor()
+                    c.execute("DELETE FROM absensi WHERE tanggal LIKE ?", (f"{bulan_hapus}%",))
+                    conn.commit()
+                    st.warning(f"Data bulan {bulan_hapus} telah dihapus!")
+                    st.rerun()
+            
+            with col_del2:
+                st.write("Kosongkan Semua Data Absensi")
+                if st.button("❗ RESET SEMUA TABEL ABSENSI", use_container_width=True, type="secondary"):
+                    # Fitur konfirmasi sederhana
+                    st.session_state.confirm_delete = True
+                
+                if st.session_state.get('confirm_delete'):
+                    st.error("Apakah Anda yakin ingin menghapus SELURUH data absensi? Tindakan ini tidak bisa dibatalkan.")
+                    if st.button("YA, HAPUS SEMUA"):
+                        c = conn.cursor()
+                        c.execute("DELETE FROM absensi")
+                        conn.commit()
+                        st.session_state.confirm_delete = False
+                        st.success("Seluruh data absensi telah dibersihkan!")
+                        st.rerun()
+                    if st.button("Batalkan"):
+                        st.session_state.confirm_delete = False
+                        st.rerun()
+            conn.close()
         with t3:
             st.subheader("Pengaturan Keamanan")
             with st.expander("Ganti Password Akun Kepsek"):
