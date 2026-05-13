@@ -179,7 +179,7 @@ elif st.session_state.logged_in:
                 
                 if submit_button:
                     if not geo_string:
-                        st.error("Gagal! Lokasi wajib dideteksi sebelum mengirim absen.")
+                        st.error("Gagal! Lokasi wajib dideteksi.")
                     elif not mpl or not mtr:
                         st.error("Isi semua kolom terlebih dahulu.")
                     else:
@@ -187,15 +187,34 @@ elif st.session_state.logged_in:
                             conn = sqlite3.connect('absensi_sekolah.db')
                             c = conn.cursor()
                             
-                            # Simpan ke kolom masing-masing termasuk kolom 'lokasi'
-                            c.execute("""
-                                INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, lokasi, status_siswa, status_kepsek) 
-                                VALUES (?,?,?,?,?,?,?,?)
-                            """, (get_waktu_wib(), ket, mpl, kls, mtr, geo_string, 'Pending', 'Pending'))
+                            # --- LOGIKA PENGAMAN DATA GANDA ---
+                            tgl_hari_ini = get_waktu_wib().split(' ')[0] # Ambil tanggalnya saja (YYYY-MM-DD)
                             
-                            conn.commit()
-                            conn.close()
-                            st.success("✅ Absensi terkirim dengan data lokasi terpisah!")
+                            # Cek apakah sudah ada data dengan Nama, Kelas, dan Tanggal yang sama
+                            c.execute("""
+                                SELECT id FROM absensi 
+                                WHERE nama_guru = ? 
+                                AND kelas = ? 
+                                AND tanggal LIKE ?
+                            """, (ket, kls, f"{tgl_hari_ini}%"))
+                            
+                            data_ada = c.fetchone()
+                            
+                            if data_ada:
+                                st.warning(f"⚠️ Maaf Pak/Bu {ket}, Bapak/Ibu sudah mengisi absen untuk kelas {kls} hari ini. Data tidak disimpan ulang.")
+                                conn.close()
+                            else:
+                                # Jika belum ada, baru simpan data
+                                c.execute("""
+                                    INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, lokasi, status_siswa, status_kepsek) 
+                                    VALUES (?,?,?,?,?,?,?,?)
+                                """, (get_waktu_wib(), ket, mpl, kls, mtr, geo_string, 'Pending', 'Pending'))
+                                
+                                conn.commit()
+                                conn.close()
+                                st.success("✅ Absensi berhasil dikirim!")
+                            # ----------------------------------
+                            
                         except Exception as e:
                             st.error(f"Error: {e}")
 
