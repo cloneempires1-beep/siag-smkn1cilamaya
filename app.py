@@ -292,8 +292,7 @@ elif st.session_state.logged_in:
             st.subheader("Pusat Data & Rekapitulasi")
             conn = sqlite3.connect('absensi_sekolah.db')
             
-            # --- FILTER BULAN ---
-            # Mengambil daftar bulan yang unik dari database
+            # --- 1. BAGIAN FILTER & DOWNLOAD REKAP CSV ---
             df_months = pd.read_sql_query("SELECT DISTINCT strftime('%Y-%m', tanggal) as bulan FROM absensi", conn)
             list_bulan = ["Semua Bulan"] + sorted(df_months['bulan'].tolist(), reverse=True)
             
@@ -322,6 +321,26 @@ elif st.session_state.logged_in:
             csv = df_final.to_csv(index=False).encode('utf-8')
             st.download_button(label="📥 DOWNLOAD REKAP (CSV)", data=csv, 
                                file_name=f"rekap_{pilih_bulan}_{pilih_guru}.csv", mime='text/csv')
+
+            st.markdown("---") # Garis pemisah visual
+        
+        # --- 2. BAGIAN BACKUP DATABASE ---
+            st.subheader("💾 Backup Sistem")
+            st.info("Gunakan fitur ini untuk mengamankan data ke penyimpanan lokal Anda.")
+            
+            try:
+                with open("absensi_sekolah.db", "rb") as f:
+                    db_byte = f.read()
+                
+                st.download_button(
+                    label="📥 DOWNLOAD DATABASE (.DB)",
+                    data=db_byte,
+                    file_name=f"backup_absensi_SMKN1_{get_waktu_wib().split(' ')[0]}.db",
+                    mime="application/octet-stream",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Gagal menyiapkan file backup: {e}")
 
             st.markdown("---")
             
