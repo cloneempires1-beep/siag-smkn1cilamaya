@@ -136,7 +136,7 @@ elif st.session_state.logged_in:
         st.rerun()
 
 # --- MODUL GURU (VERSI KETIK JAM MANUAL) ---
-if role == "Guru":
+  if role == "Guru":
     from streamlit_js_eval import get_geolocation
     
     st.header(f"Panel Guru: {ket}")
@@ -244,7 +244,7 @@ if role == "Guru":
                         st.success("✅ Password diperbarui!")
 
    # --- MODUL SISWA (VERSI BARU DENGAN JAM KE & LOKASI) ---
-    elif role == "Siswa":
+   elif role == "Siswa":
         st.header(f"Panel Ketua Kelas: {ket}")
         t1, t2, t3 = st.tabs(["✅ Validasi Guru", "📑 Rekap Guru Mengajar", "🔐 Keamanan"])
         
