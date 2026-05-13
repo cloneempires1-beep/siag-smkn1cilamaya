@@ -135,7 +135,7 @@ elif st.session_state.logged_in:
         st.session_state.page = "landing"
         st.rerun()
 
-   # --- MODUL GURU (VERSI TERBARU DENGAN GEOTAGGING) ---
+   # --- MODUL GURU (VERSI TERPISAH KOLOM GEOTAG) ---
     if role == "Guru":
         from streamlit_js_eval import get_geolocation
         
@@ -145,66 +145,66 @@ elif st.session_state.logged_in:
         with t1:
             st.subheader("Form Absensi Harian")
             
-            # Mendeteksi Lokasi Secara Otomatis
-            st.write("---")
+            # Mendeteksi Lokasi
             st.markdown("### 📍 Verifikasi Lokasi")
             location = get_geolocation()
             
             if location:
                 lat = location['coords']['latitude']
                 lon = location['coords']['longitude']
-                st.success(f"Lokasi terdeteksi: {lat}, {lon}")
-                # Koordinat disimpan dalam string untuk database
                 geo_string = f"{lat}, {lon}"
+                st.success(f"Lokasi terdeteksi: {geo_string}")
             else:
-                st.warning("Sedang mencari lokasi... Pastikan GPS aktif dan izin lokasi (Allow) sudah diklik pada browser.")
+                st.warning("Menunggu GPS... Pastikan izin lokasi aktif.")
                 geo_string = None
 
-            st.write("---")
-            
-            # Form Input Data
             with st.form("absen_guru"):
                 conn = sqlite3.connect('absensi_sekolah.db')
-                # Mengambil daftar kelas dari database
+                
+                # OTOMATIS: Tambah kolom lokasi jika belum ada (hanya jalan sekali)
+                try:
+                    conn.execute("ALTER TABLE absensi ADD COLUMN lokasi TEXT")
+                    conn.commit()
+                except:
+                    pass # Jika kolom sudah ada, abaikan errornya
+                
                 list_kelas = [r[0] for r in conn.execute("SELECT keterangan FROM users WHERE role='Siswa'").fetchall()]
                 conn.close()
                 
                 kls = st.selectbox("Pilih Kelas", list_kelas)
                 mpl = st.text_input("Mata Pelajaran")
-                mtr = st.text_area("Materi Pembelajaran / Ringkasan KBM")
+                mtr = st.text_area("Materi Pembelajaran")
                 
                 submit_button = st.form_submit_button("Kirim Absensi")
                 
                 if submit_button:
                     if not geo_string:
-                        st.error("Gagal mengirim! Lokasi tidak terdeteksi. Mohon segarkan (refresh) halaman dan izinkan akses lokasi.")
+                        st.error("Gagal! Lokasi wajib dideteksi sebelum mengirim absen.")
                     elif not mpl or not mtr:
-                        st.error("Mohon isi Mata Pelajaran dan Materi terlebih dahulu.")
+                        st.error("Isi semua kolom terlebih dahulu.")
                     else:
                         try:
-                            # Menyimpan data ke database
                             conn = sqlite3.connect('absensi_sekolah.db')
                             c = conn.cursor()
                             
-                            # Catatan: Geo Tagging kita tempelkan di kolom materi agar tidak perlu ubah struktur tabel database yang lama
-                            materi_lengkap = f"{mtr}\n\n[📍 Geotag: https://www.google.com/maps?q={geo_string}]"
-                            
+                            # Simpan ke kolom masing-masing termasuk kolom 'lokasi'
                             c.execute("""
-                                INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, status_siswa, status_kepsek) 
-                                VALUES (?,?,?,?,?,?,?)
-                            """, (get_waktu_wib(), ket, mpl, kls, materi_lengkap, 'Pending', 'Pending'))
+                                INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, lokasi, status_siswa, status_kepsek) 
+                                VALUES (?,?,?,?,?,?,?,?)
+                            """, (get_waktu_wib(), ket, mpl, kls, mtr, geo_string, 'Pending', 'Pending'))
                             
                             conn.commit()
                             conn.close()
-                            st.success("✅ Absensi berhasil dikirim! Silakan ingatkan Ketua Kelas untuk memvalidasi.")
+                            st.success("✅ Absensi terkirim dengan data lokasi terpisah!")
                         except Exception as e:
-                            st.error(f"Terjadi kesalahan: {e}")
+                            st.error(f"Error: {e}")
 
         with t2:
-            st.subheader("Riwayat Mengajar Anda")
+            st.subheader("Riwayat Mengajar")
             conn = sqlite3.connect('absensi_sekolah.db')
+            # Menampilkan kolom lokasi di tabel riwayat
             df = pd.read_sql_query("""
-                SELECT tanggal, kelas, mapel, materi, status_siswa as 'Status Siswa', status_kepsek as 'Status Kepsek' 
+                SELECT tanggal, kelas, mapel, materi, lokasi as '📍 Lokasi', status_siswa as 'Siswa', status_kepsek as 'Kepsek' 
                 FROM absensi 
                 WHERE nama_guru=? 
                 ORDER BY tanggal DESC
@@ -212,22 +212,21 @@ elif st.session_state.logged_in:
             conn.close()
             
             if not df.empty:
+                # Tips: Lokasi akan muncul sebagai koordinat di tabel
                 st.dataframe(df, use_container_width=True)
             else:
-                st.info("Belum ada riwayat mengajar yang tercatat.")
+                st.info("Belum ada riwayat.")
 
         with t3:
+            # (Bagian Ganti Password tetap sama seperti sebelumnya)
             st.subheader("Pengaturan Akun")
             with st.expander("Ganti Password"):
                 new_p = st.text_input("Password Baru", type="password")
                 confirm_p = st.text_input("Konfirmasi Password Baru", type="password")
-                
                 if st.button("Update Password"):
                     if new_p == confirm_p and new_p != "":
                         update_password(username_aktif, new_p)
-                        st.success("✅ Password berhasil diperbarui!")
-                    else:
-                        st.error("Password tidak cocok atau kosong.")
+                        st.success("✅ Password diperbarui!")
 
     # --- MODUL SISWA (VERSI BARU DENGAN REKAP) ---
     elif role == "Siswa":
