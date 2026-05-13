@@ -1,8 +1,9 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-from datetime import datetime
 import pytz
+from datetime import datetime
+from streamlit_js_eval import get_geolocation
 
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Absensi SMKN 1 Cilamaya", layout="wide", page_icon="📝")
@@ -134,36 +135,99 @@ elif st.session_state.logged_in:
         st.session_state.page = "landing"
         st.rerun()
 
-    # --- MODUL GURU ---
+   # --- MODUL GURU (VERSI TERBARU DENGAN GEOTAGGING) ---
     if role == "Guru":
+        from streamlit_js_eval import get_geolocation
+        
         st.header(f"Panel Guru: {ket}")
         t1, t2, t3 = st.tabs(["📝 Input Absen", "📚 Riwayat & Materi", "🔐 Keamanan"])
+        
         with t1:
+            st.subheader("Form Absensi Harian")
+            
+            # Mendeteksi Lokasi Secara Otomatis
+            st.write("---")
+            st.markdown("### 📍 Verifikasi Lokasi")
+            location = get_geolocation()
+            
+            if location:
+                lat = location['coords']['latitude']
+                lon = location['coords']['longitude']
+                st.success(f"Lokasi terdeteksi: {lat}, {lon}")
+                # Koordinat disimpan dalam string untuk database
+                geo_string = f"{lat}, {lon}"
+            else:
+                st.warning("Sedang mencari lokasi... Pastikan GPS aktif dan izin lokasi (Allow) sudah diklik pada browser.")
+                geo_string = None
+
+            st.write("---")
+            
+            # Form Input Data
             with st.form("absen_guru"):
                 conn = sqlite3.connect('absensi_sekolah.db')
+                # Mengambil daftar kelas dari database
                 list_kelas = [r[0] for r in conn.execute("SELECT keterangan FROM users WHERE role='Siswa'").fetchall()]
                 conn.close()
+                
                 kls = st.selectbox("Pilih Kelas", list_kelas)
                 mpl = st.text_input("Mata Pelajaran")
-                mtr = st.text_area("Materi Pembelajaran")
-                if st.form_submit_button("Kirim Absensi"):
-                    conn = sqlite3.connect('absensi_sekolah.db')
-                    c = conn.cursor()
-                    c.execute("INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, status_siswa, status_kepsek) VALUES (?,?,?,?,?,?,?)",
-                              (get_waktu_wib(), ket, mpl, kls, mtr, 'Pending', 'Pending'))
-                    conn.commit()
-                    conn.close()
-                    st.success("Berhasil dikirim!")
+                mtr = st.text_area("Materi Pembelajaran / Ringkasan KBM")
+                
+                submit_button = st.form_submit_button("Kirim Absensi")
+                
+                if submit_button:
+                    if not geo_string:
+                        st.error("Gagal mengirim! Lokasi tidak terdeteksi. Mohon segarkan (refresh) halaman dan izinkan akses lokasi.")
+                    elif not mpl or not mtr:
+                        st.error("Mohon isi Mata Pelajaran dan Materi terlebih dahulu.")
+                    else:
+                        try:
+                            # Menyimpan data ke database
+                            conn = sqlite3.connect('absensi_sekolah.db')
+                            c = conn.cursor()
+                            
+                            # Catatan: Geo Tagging kita tempelkan di kolom materi agar tidak perlu ubah struktur tabel database yang lama
+                            materi_lengkap = f"{mtr}\n\n[📍 Geotag: https://www.google.com/maps?q={geo_string}]"
+                            
+                            c.execute("""
+                                INSERT INTO absensi (tanggal, nama_guru, mapel, kelas, materi, status_siswa, status_kepsek) 
+                                VALUES (?,?,?,?,?,?,?)
+                            """, (get_waktu_wib(), ket, mpl, kls, materi_lengkap, 'Pending', 'Pending'))
+                            
+                            conn.commit()
+                            conn.close()
+                            st.success("✅ Absensi berhasil dikirim! Silakan ingatkan Ketua Kelas untuk memvalidasi.")
+                        except Exception as e:
+                            st.error(f"Terjadi kesalahan: {e}")
+
         with t2:
+            st.subheader("Riwayat Mengajar Anda")
             conn = sqlite3.connect('absensi_sekolah.db')
-            df = pd.read_sql_query("SELECT tanggal, kelas, mapel, materi, status_siswa, status_kepsek FROM absensi WHERE nama_guru=? ORDER BY tanggal DESC", conn, params=(ket,))
+            df = pd.read_sql_query("""
+                SELECT tanggal, kelas, mapel, materi, status_siswa as 'Status Siswa', status_kepsek as 'Status Kepsek' 
+                FROM absensi 
+                WHERE nama_guru=? 
+                ORDER BY tanggal DESC
+            """, conn, params=(ket,))
             conn.close()
-            st.dataframe(df, use_container_width=True)
+            
+            if not df.empty:
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("Belum ada riwayat mengajar yang tercatat.")
+
         with t3:
-            new_p = st.text_input("Password Baru", type="password")
-            if st.button("Update"):
-                update_password(username_aktif, new_p)
-                st.success("Selesai!")
+            st.subheader("Pengaturan Akun")
+            with st.expander("Ganti Password"):
+                new_p = st.text_input("Password Baru", type="password")
+                confirm_p = st.text_input("Konfirmasi Password Baru", type="password")
+                
+                if st.button("Update Password"):
+                    if new_p == confirm_p and new_p != "":
+                        update_password(username_aktif, new_p)
+                        st.success("✅ Password berhasil diperbarui!")
+                    else:
+                        st.error("Password tidak cocok atau kosong.")
 
     # --- MODUL SISWA (VERSI BARU DENGAN REKAP) ---
     elif role == "Siswa":
