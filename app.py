@@ -244,7 +244,7 @@ if role == "Guru":
                         st.success("✅ Password diperbarui!")
 
    # --- MODUL SISWA (VERSI BARU DENGAN JAM KE & LOKASI) ---
- elif role == "Siswa":
+  elif role == "Siswa":
         st.header(f"Panel Ketua Kelas: {ket}")
         t1, t2, t3 = st.tabs(["✅ Validasi Guru", "📑 Rekap Guru Mengajar", "🔐 Keamanan"])
         
